@@ -38,6 +38,7 @@ use_ramping = True
 RAMP_RATE = 250      # PWM units per second
 MIN_RAMP_THRESHOLD = 15
 MIN_PWM_THRESHOLD = 15
+TURN_MIN_PWM_THRESHOLD = 6
 
 current_movement, prev_movement = 'stop', 'stop'
 
@@ -141,16 +142,24 @@ def set_motors(left, right):
         GPIO.output(LEFT_MOTOR_IN4, GPIO.HIGH)
         left_motor_pwm.ChangeDutyCycle(100)
 
-def apply_min_threshold(pwm_value, min_threshold):
-    if pwm_value == 0:
-        return 0
-    elif abs(pwm_value) < min_threshold:
-        return min_threshold if pwm_value > 0 else -min_threshold
-    else:
-        return pwm_value
+def clamp(value, lower, upper):
+    return max(lower, min(value, upper))
+
 
 def sgn(x):
-    return 1 if x >= 0 else -1
+    if x > 0:
+        return 1
+    if x < 0:
+        return -1
+    return 0
+
+
+def apply_feedforward_threshold(pwm_value, min_threshold):
+    if pwm_value == 0:
+        return 0.0
+    if abs(pwm_value) < min_threshold:
+        return float(min_threshold * sgn(pwm_value))
+    return float(pwm_value)
 
 def pid_control():
     global left_pwm, right_pwm, left_count, right_count
@@ -170,9 +179,6 @@ def pid_control():
     ramp_right_pwm = 0.0
     previous_left_target = 0.0
     previous_right_target = 0.0
-
-    def sgn(x):
-        return 1 if x >= 0 else -1
 
     while running:
         now = monotonic()
@@ -199,9 +205,13 @@ def pid_control():
             turn_integral = 0.0
             turn_last_error = 0.0
 
-        # Defaults if PID disabled
-        target_left_pwm = left_pwm
-        target_right_pwm = right_pwm
+        # Feed-forward commands with mode-specific thresholds
+        feedforward_threshold = TURN_MIN_PWM_THRESHOLD if current_movement == 'turn' else MIN_PWM_THRESHOLD
+        feed_left_pwm = apply_feedforward_threshold(left_pwm, feedforward_threshold)
+        feed_right_pwm = apply_feedforward_threshold(right_pwm, feedforward_threshold)
+
+        target_left_pwm = feed_left_pwm
+        target_right_pwm = feed_right_pwm
 
         # --- PID control ---
         if use_PID and (KP or KI or KD):
@@ -210,40 +220,52 @@ def pid_control():
                 error = left_count - right_count
                 proportional = KP * error
                 linear_integral += KI * error * dt
-                linear_integral = max(-MAX_CORRECTION, min(linear_integral, MAX_CORRECTION))
+                linear_integral = clamp(linear_integral, -MAX_CORRECTION, MAX_CORRECTION)
                 derivative = KD * (error - linear_last_error) / dt if dt > 0 else 0.0
                 correction = proportional + linear_integral + derivative
-                correction = max(-MAX_CORRECTION, min(correction, MAX_CORRECTION))
+                correction = clamp(correction, -MAX_CORRECTION, MAX_CORRECTION)
                 linear_last_error = error
 
                 # Backward flips sense
                 if current_movement == 'backward':
                     correction = -correction
 
-                target_left_pwm = left_pwm - correction
-                target_right_pwm = right_pwm + correction
+                base_magnitude = min(abs(feed_left_pwm), abs(feed_right_pwm))
+                if base_magnitude > 0:
+                    correction = clamp(correction, -base_magnitude, base_magnitude)
+                else:
+                    correction = 0.0
+
+                target_left_pwm = feed_left_pwm - correction
+                target_right_pwm = feed_right_pwm + correction
 
             elif current_movement == 'turn':
                 # Rotational PID balances magnitudes: |left| == |right|
                 error_turn = abs(left_count) - abs(right_count)
                 proportional = KP * error_turn
                 turn_integral += KI * error_turn * dt
-                turn_integral = max(-MAX_CORRECTION, min(turn_integral, MAX_CORRECTION))
+                turn_integral = clamp(turn_integral, -MAX_CORRECTION, MAX_CORRECTION)
                 derivative = KD * (error_turn - turn_last_error) / dt if dt > 0 else 0.0
                 correction = proportional + turn_integral + derivative
-                correction = max(-MAX_CORRECTION, min(correction, MAX_CORRECTION))
+                correction = clamp(correction, -MAX_CORRECTION, MAX_CORRECTION)
                 turn_last_error = error_turn
 
+                base_magnitude = min(abs(feed_left_pwm), abs(feed_right_pwm))
+                if base_magnitude > 0:
+                    correction = clamp(correction, -base_magnitude, base_magnitude)
+                else:
+                    correction = 0.0
+
                 # Adjust each wheel respecting its sign so the faster wheel slows
-                target_left_pwm  = left_pwm  - sgn(left_pwm)  * correction
-                target_right_pwm = right_pwm + sgn(right_pwm) * correction
+                target_left_pwm = feed_left_pwm - sgn(feed_left_pwm) * correction
+                target_right_pwm = feed_right_pwm + sgn(feed_right_pwm) * correction
             else:
                 # Stop
                 linear_integral = linear_last_error = 0.0
                 turn_integral = turn_last_error = 0.0
                 reset_encoder()
-                target_left_pwm = left_pwm
-                target_right_pwm = right_pwm
+                target_left_pwm = feed_left_pwm
+                target_right_pwm = feed_right_pwm
 
         # --- Ramping (shared) ---
         if use_ramping and use_PID:
@@ -286,8 +308,8 @@ def pid_control():
             ramp_left_pwm = target_left_pwm
             ramp_right_pwm = target_right_pwm
 
-        final_left_pwm = apply_min_threshold(ramp_left_pwm, MIN_PWM_THRESHOLD)
-        final_right_pwm = apply_min_threshold(ramp_right_pwm, MIN_PWM_THRESHOLD)
+        final_left_pwm = clamp(ramp_left_pwm, -100, 100)
+        final_right_pwm = clamp(ramp_right_pwm, -100, 100)
         set_motors(final_left_pwm, final_right_pwm)
 
         # Debug
@@ -436,5 +458,5 @@ def main():
         GPIO.cleanup()
         print("Cleanup complete")
 
-if __name__ == "__main__":
+if _name_ == "_main_":
     main()
