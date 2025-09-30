@@ -458,5 +458,5 @@ def main():
         GPIO.cleanup()
         print("Cleanup complete")
 
-if __name__ == "__main__  ":
+if __name__ == "__main__":
     main()
