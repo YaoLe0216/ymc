@@ -445,7 +445,7 @@ def pid_config_server():
     
 
 def wheel_server():
-    global left_pwm, right_pwm, running, left_count, right_count
+    global left_pwm, right_pwm, running, left_count, right_count, turn_tick_counter
     
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -471,8 +471,8 @@ def wheel_server():
                     # print(f"Received wheel: left_speed={left_speed:.4f}, right_speed={right_speed:.4f}")
                     left_pwm, right_pwm = left_speed*100, right_speed*100
                     
-                    # Send encoder counts back
-                    response = struct.pack("!ii", left_count, right_count)
+                    # Send encoder counts back along with turn tick counter
+                    response = struct.pack("!iii", left_count, right_count, turn_tick_counter)
                     client_socket.sendall(response)
                     
                 except Exception as e:
