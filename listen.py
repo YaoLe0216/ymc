@@ -42,6 +42,9 @@ RAMP_RATE = 250  # PWM units per second (adjust this value to tune ramp speed)
 MIN_RAMP_THRESHOLD = 15  # Only ramp if change is greater than this
 MIN_PWM_THRESHOLD = 15
 current_movement, prev_movement = 'stop', 'stop'
+turn_tick_counter = 0
+last_turn_left_count = 0
+last_turn_right_count = 0
 
 def setup_gpio():
     GPIO.setmode(GPIO.BCM)
@@ -160,6 +163,7 @@ def apply_min_threshold(pwm_value, min_threshold):
 def pid_control():
     # Only applies for forward/backward, not turning
     global left_pwm, right_pwm, left_count, right_count, use_PID, KP, KI, KD, use_PID_turn, KP_turn, KI_turn, KD_turn, prev_movement, current_movement
+    global turn_tick_counter, last_turn_left_count, last_turn_right_count
     
     # Forward/backward PID state
     integral_fb = 0
@@ -194,6 +198,15 @@ def pid_control():
             elif current_movement == 'turn':
                 integral_turn, last_error_turn = 0, 0
             reset_encoder()
+
+            if current_movement == 'turn':
+                turn_tick_counter = 0
+                last_turn_left_count = left_count
+                last_turn_right_count = right_count
+            elif prev_movement == 'turn':
+                turn_tick_counter = 0
+                last_turn_left_count = left_count
+                last_turn_right_count = right_count
 
         
         if not use_PID:
@@ -240,6 +253,13 @@ def pid_control():
                     # PID disabled for turning
                     target_left_pwm = left_pwm
                     target_right_pwm = right_pwm
+
+                left_delta = left_count - last_turn_left_count
+                right_delta = right_count - last_turn_right_count
+                if left_delta > 0 or right_delta > 0:
+                    turn_tick_counter += 1
+                    last_turn_left_count = left_count
+                    last_turn_right_count = right_count
                         
             else:
                 target_left_pwm = left_pwm
@@ -309,7 +329,16 @@ def pid_control():
         set_motors(final_left_pwm, final_right_pwm)
         
         if ramp_left_pwm != 0: # print for debugging purpose
-            print(f"(Left PWM, Right PWM)=({ramp_left_pwm:.2f},{ramp_right_pwm:.2f}), (Left Enc, Right Enc)=({left_count}, {right_count})")
+            if current_movement == 'turn':
+                print(
+                    f"(Left PWM, Right PWM)=({ramp_left_pwm:.2f},{ramp_right_pwm:.2f}), "
+                    f"(Left Enc, Right Enc)=({left_count}, {right_count}), Turn Ticks={turn_tick_counter}"
+                )
+            else:
+                print(
+                    f"(Left PWM, Right PWM)=({ramp_left_pwm:.2f},{ramp_right_pwm:.2f}), "
+                    f"(Left Enc, Right Enc)=({left_count}, {right_count})"
+                )
         
         time.sleep(0.01)
 
