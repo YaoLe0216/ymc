@@ -208,7 +208,22 @@ def pid_control():
                 last_turn_left_count = left_count
                 last_turn_right_count = right_count
 
-        
+
+        if current_movement == 'turn':
+            left_delta = left_count - last_turn_left_count
+            right_delta = right_count - last_turn_right_count
+
+            if left_delta > 0:
+                turn_tick_counter += left_delta
+                last_turn_left_count = left_count
+            if right_delta > 0:
+                turn_tick_counter += right_delta
+                last_turn_right_count = right_count
+        else:
+            last_turn_left_count = left_count
+            last_turn_right_count = right_count
+
+
         if not use_PID:
             target_left_pwm = left_pwm
             target_right_pwm = right_pwm
@@ -254,13 +269,6 @@ def pid_control():
                     target_left_pwm = left_pwm
                     target_right_pwm = right_pwm
 
-                left_delta = left_count - last_turn_left_count
-                right_delta = right_count - last_turn_right_count
-                if left_delta > 0 or right_delta > 0:
-                    turn_tick_counter += 1
-                    last_turn_left_count = left_count
-                    last_turn_right_count = right_count
-                        
             else:
                 target_left_pwm = left_pwm
                 target_right_pwm = right_pwm
