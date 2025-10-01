@@ -216,7 +216,7 @@ def pid_control():
             if left_delta > 0:
                 turn_tick_counter += left_delta
                 last_turn_left_count = left_count
-            if right_delta > 0:
+            elif right_delta > 0:
                 turn_tick_counter += right_delta
                 last_turn_right_count = right_count
         else:
