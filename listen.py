@@ -25,12 +25,8 @@ RIGHT_ENCODER = 16
 
 # PID Constants (default values, will be overridden by client)
 use_PID = 0
-KP, KI, KD = 0, 0, 0
+KP, Ki, KD = 0, 0, 0
 MAX_CORRECTION = 30  # Maximum PWM correction value
-
-# PID for turning
-use_PID_turn = 0
-KP_turn, KI_turn, KD_turn = 0, 0, 0
 
 # Global variables
 running = True
@@ -42,9 +38,6 @@ RAMP_RATE = 250  # PWM units per second (adjust this value to tune ramp speed)
 MIN_RAMP_THRESHOLD = 15  # Only ramp if change is greater than this
 MIN_PWM_THRESHOLD = 15
 current_movement, prev_movement = 'stop', 'stop'
-turn_tick_counter = 0
-last_turn_left_count = 0
-last_turn_right_count = 0
 
 def setup_gpio():
     GPIO.setmode(GPIO.BCM)
@@ -162,17 +155,10 @@ def apply_min_threshold(pwm_value, min_threshold):
 
 def pid_control():
     # Only applies for forward/backward, not turning
-    global left_pwm, right_pwm, left_count, right_count, use_PID, KP, KI, KD, use_PID_turn, KP_turn, KI_turn, KD_turn, prev_movement, current_movement
-    global turn_tick_counter, last_turn_left_count, last_turn_right_count
+    global left_pwm, right_pwm, left_count, right_count, use_PID, KP, KI, KD, prev_movement, current_movement
     
-    # Forward/backward PID state
-    integral_fb = 0
-    last_error_fb = 0
-
-    # Turning PID state
-    integral_turn = 0
-    last_error_turn = 0
-
+    integral = 0
+    last_error = 0
     last_time = monotonic()
     
     # Ramping variables & params
@@ -191,39 +177,7 @@ def pid_control():
         elif (left_pwm < 0 and right_pwm < 0): current_movement = 'backward'
         elif (left_pwm == 0 and right_pwm == 0): current_movement = 'stop'
         else: current_movement = 'turn'
-
-        if prev_movement != current_movement:
-            if current_movement in ['forward', 'backward']:
-                integral_fb, last_error_fb = 0, 0
-            elif current_movement == 'turn':
-                integral_turn, last_error_turn = 0, 0
-            reset_encoder()
-
-            if current_movement == 'turn':
-                turn_tick_counter = 0
-                last_turn_left_count = left_count
-                last_turn_right_count = right_count
-            elif prev_movement == 'turn':
-                turn_tick_counter = 0
-                last_turn_left_count = left_count
-                last_turn_right_count = right_count
-
-
-        if current_movement == 'turn':
-            left_delta = left_count - last_turn_left_count
-            right_delta = right_count - last_turn_right_count
-
-            if left_delta > 0:
-                turn_tick_counter += left_delta
-                last_turn_left_count = left_count
-            elif right_delta > 0:
-                turn_tick_counter += right_delta
-                last_turn_right_count = right_count
-        else:
-            last_turn_left_count = left_count
-            last_turn_right_count = right_count
-
-
+        
         if not use_PID:
             target_left_pwm = left_pwm
             target_right_pwm = right_pwm
@@ -232,44 +186,23 @@ def pid_control():
                 
                 error = left_count - right_count
                 proportional = KP * error
-                integral_fb += KI * error * dt
-                integral_fb = max(-MAX_CORRECTION, min(integral_fb, MAX_CORRECTION))
-                derivative = KD * (error - last_error_fb) / dt if dt > 0 else 0
-
-                correction = proportional + integral_fb + derivative
+                integral += KI * error * dt
+                integral = max(-MAX_CORRECTION, min(integral, MAX_CORRECTION))  # Anti-windup
+                derivative = KD * (error - last_error) / dt if dt > 0 else 0
+                correction = proportional + integral + derivative
                 correction = max(-MAX_CORRECTION, min(correction, MAX_CORRECTION))
-                last_error_fb = error
-
+                last_error = error
                             
                 if current_movement == 'backward':
                     correction = -correction
 
                 target_left_pwm = left_pwm - correction
-                target_right_pwm = right_pwm + correction   
-
-            elif current_movement == 'turn':
-                if use_PID_turn:
-                    # PID based on encoder difference
-                    error = left_count - right_count
-                    proportional = KP_turn * error
-                    integral_turn += KI_turn * error * dt
-                    integral_turn = max(-MAX_CORRECTION, min(integral_turn, MAX_CORRECTION))
-                    derivative = KD_turn * (error - last_error_turn) / dt if dt > 0 else 0
-
-                    correction = proportional + integral_turn + derivative
-                    correction = max(-MAX_CORRECTION, min(correction, MAX_CORRECTION))
-                    last_error_turn = error
-
-                    
-                    # Adjust wheels oppositely for turning
-                    target_left_pwm = left_pwm - correction
-                    target_right_pwm = right_pwm + correction
-                else:
-                    # PID disabled for turning
-                    target_left_pwm = left_pwm
-                    target_right_pwm = right_pwm
-
+                target_right_pwm = right_pwm + correction               
             else:
+                # Reset when stopped or turning
+                integral = 0
+                last_error = 0
+                reset_encoder()
                 target_left_pwm = left_pwm
                 target_right_pwm = right_pwm
         
@@ -337,16 +270,7 @@ def pid_control():
         set_motors(final_left_pwm, final_right_pwm)
         
         if ramp_left_pwm != 0: # print for debugging purpose
-            if current_movement == 'turn':
-                print(
-                    f"(Left PWM, Right PWM)=({ramp_left_pwm:.2f},{ramp_right_pwm:.2f}), "
-                    f"(Left Enc, Right Enc)=({left_count}, {right_count}), Turn Ticks={turn_tick_counter}"
-                )
-            else:
-                print(
-                    f"(Left PWM, Right PWM)=({ramp_left_pwm:.2f},{ramp_right_pwm:.2f}), "
-                    f"(Left Enc, Right Enc)=({left_count}, {right_count})"
-                )
+            print(f"(Left PWM, Right PWM)=({ramp_left_pwm:.2f},{ramp_right_pwm:.2f}), (Left Enc, Right Enc)=({left_count}, {right_count})")
         
         time.sleep(0.01)
 
@@ -399,7 +323,7 @@ def camera_stream_server():
 
 
 def pid_config_server():
-    global use_PID, KP, KI, KD, use_PID_turn, KP_turn, KI_turn, KD_turn
+    global use_PID, KP, KI, KD
     
     # Create socket for receiving PID configuration
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -414,19 +338,12 @@ def pid_config_server():
             print(f"PID config client connected")
             
             try:
-                # Data format: 8 floats
-                # [use_PID, KP, KI, KD, use_PID_turn, KP_turn, KI_turn, KD_turn]
-
-                data = client_socket.recv(32)
-                if data and len(data) == 32:
-                    use_PID, KP, KI, KD, use_PID_turn, KP_turn, KI_turn, KD_turn = struct.unpack("!ffffffff", data)
-                    
-                    if use_PID: print(f"Forward PID: KP={KP}, KI={KI}, KD={KD}")
-                    else: print("Forward PID disabled")
-                    
-                    if use_PID_turn: print(f"Turning PID: KP={KP_turn}, KI={KI_turn}, KD={KD_turn}")
-                    else: print("Turning PID disabled")
-
+                # Receive PID constants (4 floats)
+                data = client_socket.recv(16)
+                if data and len(data) == 16:
+                    use_PID, KP, KI, KD = struct.unpack("!ffff", data)
+                    if use_PID: print(f"Updated PID constants: KP={KP}, KI={KI}, KD={KD}")
+                    else: print("The robot is not using PID.")
                     
                     # Send acknowledgment (1 for success)
                     response = struct.pack("!i", 1)
@@ -453,7 +370,7 @@ def pid_config_server():
     
 
 def wheel_server():
-    global left_pwm, right_pwm, running, left_count, right_count, turn_tick_counter
+    global left_pwm, right_pwm, running, left_count, right_count
     
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -479,8 +396,8 @@ def wheel_server():
                     # print(f"Received wheel: left_speed={left_speed:.4f}, right_speed={right_speed:.4f}")
                     left_pwm, right_pwm = left_speed*100, right_speed*100
                     
-                    # Send encoder counts back along with turn tick counter
-                    response = struct.pack("!iii", left_count, right_count, turn_tick_counter)
+                    # Send encoder counts back
+                    response = struct.pack("!ii", left_count, right_count)
                     client_socket.sendall(response)
                     
                 except Exception as e:
